@@ -1,0 +1,24 @@
+#!/usr/bin/env node
+const http = require('node:http');
+
+const port = Number(process.env.service_port ?? process.argv[2] ?? 9001);
+const server = http.createServer((request, response) => {
+  if (request.method !== 'GET' || request.url !== '/time') {
+    response.writeHead(404);
+    response.end();
+    return;
+  }
+
+  response.writeHead(200, { 'Content-Type': 'application/json' });
+  response.end(JSON.stringify({
+    utc: new Date().toISOString(),
+    worker: process.env.worker_id,
+    service: process.env.service_name,
+    instance: process.env.instance_id,
+    pid: process.pid,
+  }) + '\n');
+});
+
+server.listen(port, '0.0.0.0', () => {
+  console.log(`Time service listening on ${port} (pid ${process.pid})`);
+});

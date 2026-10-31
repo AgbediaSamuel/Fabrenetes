@@ -1,0 +1,13 @@
+[Unit]
+Description=Fabrenetes worker agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+EnvironmentFile=/etc/fabrenetes/worker.env
+ExecStart=/usr/local/bin/fabrenetes worker --id %H --coordinator ${coordinator_url}
+
+[Install]
+WantedBy=multi-user.target

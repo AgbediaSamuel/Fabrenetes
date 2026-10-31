@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fabrenetes · Cluster</title>
+  <link rel="stylesheet" href="/dashboard/styles.css">
+  <script src="/dashboard/app.js" defer></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="header">
+      <a class="brand" href="/" aria-label="Fabrenetes cluster">
+        <span class="brand-mark" aria-hidden="true">f</span>
+        <span>Fabrenetes</span>
+      </a>
+      <div class="coordinator-address">
+        <span class="muted">Coordinator</span>
+        <span id="coordinator"></span>
+      </div>
+    </div>
+  </header>
+  <main>
+    <div class="page-heading">
+      <p class="eyebrow">Cluster</p>
+      <h1>Overview</h1>
+      <p class="description">Create services, see where their instances run, and demonstrate recovery.</p>
+    </div>
+    <p id="connection-error" class="error" role="alert" hidden></p>
+    <div class="layout">
+      <section aria-labelledby="workers-heading">
+        <div class="section-heading">
+          <h2 id="workers-heading">Worker placement</h2>
+          <p id="summary" class="muted">Loading cluster…</p>
+        </div>
+        <div id="workers" class="workers"></div>
+        <section id="pending" class="worker" aria-labelledby="pending-heading" hidden>
+          <div class="worker-header">
+            <h3 id="pending-heading">Awaiting placement</h3>
+          </div>
+          <div class="instances"></div>
+        </section>
+        <footer>
+          <span class="live-indicator" aria-hidden="true"></span>
+          <span id="updated">Waiting for the coordinator</span>
+          <span class="footer-divider" aria-hidden="true">·</span>
+          <span>Refreshes every second</span>
+        </footer>
+        <p class="scope-note">Stop an instance to watch its PID change and restart count increase. Delete service removes all its instances.</p>
+      </section>
+      <aside class="panel" aria-labelledby="create-heading">
+        <div class="panel-heading">
+          <h2 id="create-heading">Create service</h2>
+          <p class="muted">Use clock for the time-service demo.</p>
+        </div>
+        <form id="create-form">
+          <label for="name">Service name</label>
+          <input id="name" name="name" placeholder="clock-one" required autocomplete="off">
+          <label for="command">Command</label>
+          <input id="command" name="command" value="clock" required autocomplete="off" spellcheck="false">
+          <label for="port">Starting port</label>
+          <input id="port" name="port" type="number" min="1" max="65535" value="9001" aria-describedby="port-help">
+          <p id="port-help" class="help">Each instance gets an available port on its worker, starting here.</p>
+          <label for="replicas">Replicas</label>
+          <input id="replicas" name="replicas" type="number" min="1" value="1" required>
+          <p class="help">Number of instances to run across the workers.</p>
+          <button id="create-button" class="primary" type="submit">Create service</button>
+          <p id="action-message" class="notice" role="status" aria-live="polite"></p>
+        </form>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

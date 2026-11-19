@@ -45,13 +45,18 @@ func (p *processes) availablePort(child *process) (int, error) {
 }
 
 func portAvailable(port int) (bool, error) {
-	listener, err := net.Listen("tcp4", net.JoinHostPort("", strconv.Itoa(port)))
-	if errors.Is(err, syscall.EADDRINUSE) {
-		return false, nil
+	for _, host := range []string{"", "127.0.0.1"} {
+		listener, err := net.Listen("tcp4", net.JoinHostPort(host, strconv.Itoa(port)))
+		if errors.Is(err, syscall.EADDRINUSE) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		err = listener.Close()
+		if err != nil {
+			return false, err
+		}
 	}
-	if err != nil {
-		return false, err
-	}
-	err = listener.Close()
-	return err == nil, err
+	return true, nil
 }

@@ -55,6 +55,27 @@ func TestInstancesSkipOccupiedAndReservedPorts(t *testing.T) {
 	}
 }
 
+func TestPortAllocationSkipsLoopbackListener(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	base := listener.Addr().(*net.TCPAddr).Port
+	if base == 65535 {
+		t.Skip("OS-selected port leaves no fallback port")
+	}
+	children := processes{instances: make(map[string]*process)}
+	child := &process{assignment: api.Assignment{Port: base}}
+	port, err := children.availablePort(child)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if port <= base {
+		t.Fatalf("allocated occupied loopback port: got %d, occupied %d", port, base)
+	}
+}
+
 func TestRestartReusesOrReplacesItsPort(t *testing.T) {
 	listener, err := net.Listen("tcp4", ":0")
 	if err != nil {

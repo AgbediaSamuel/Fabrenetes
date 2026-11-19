@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -23,6 +24,10 @@ func createService(ctx context.Context, args []string) error {
 	name := flags.String("name", "", "service name (required)")
 	replicas := flags.Int("replicas", 1, "number of processes to run")
 	port := flags.Int("port", 0, "starting port; each worker picks an available port per instance")
+	packageFile := flags.String("package", "", "ZIP containing the application, dependencies, and optional runtime")
+	stateful := flags.Bool("stateful", false, "give the service a replicated dictionary on three workers")
+	partitioning := flags.String("partitioning", "none", "dictionary layout: none or hash (stateful services only)")
+	partitions := flags.Int("partitions", 1, "fixed number of dictionary partitions (stateful services only)")
 	address := coordinatorFlag(flags)
 	flags.Usage = func() {
 		fmt.Fprintln(os.Stderr, "Usage: fabrenetes create [flags] executable [args...]")
@@ -31,6 +36,33 @@ func createService(ctx context.Context, args []string) error {
 	err := flags.Parse(args)
 	if err != nil {
 		return err
+	}
+	if *stateful {
+		replicasSet := false
+		flags.Visit(func(f *flag.Flag) {
+			if f.Name == "replicas" {
+				replicasSet = true
+			}
+		})
+		if !replicasSet {
+			*replicas = 3
+		}
+		if *replicas != 3 {
+			return errors.New("stateful services require three replicas")
+		}
+		if *partitions < 1 || (*partitioning != "none" && *partitioning != "hash") || (*partitioning == "none" && *partitions != 1) {
+			return errors.New("choose partitioning none with one partition, or hash with a positive partition count")
+		}
+	} else {
+		partitionFlags := false
+		flags.Visit(func(f *flag.Flag) {
+			if f.Name == "partitioning" || f.Name == "partitions" {
+				partitionFlags = true
+			}
+		})
+		if partitionFlags {
+			return errors.New("partitioning and partitions require --stateful")
+		}
 	}
 	if !api.ValidName(*name) || *replicas < 1 || flags.NArg() == 0 {
 		return errors.New("create requires a valid name, positive replica count, and executable")
@@ -45,6 +77,17 @@ func createService(ctx context.Context, args []string) error {
 		Args:     flags.Args()[1:],
 		Replicas: *replicas,
 		Port:     *port,
+		Stateful: *stateful,
+	}
+	if *stateful {
+		spec.Partitioning = *partitioning
+		spec.Partitions = *partitions
+	}
+	if *packageFile != "" {
+		spec.Package, err = uploadPackage(ctx, *address, *packageFile)
+		if err != nil {
+			return err
+		}
 	}
 	var service api.Service
 	err = coordinatorRequest(ctx, http.MethodPost, *address, "services", spec, &service)
@@ -52,6 +95,9 @@ func createService(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Printf("Created %s with %d replicas\n", service.Name, service.Replicas)
+	if service.Endpoint != "" {
+		fmt.Println("Address:", strings.TrimRight(*address, "/")+service.Endpoint)
+	}
 	return nil
 }
 
@@ -71,14 +117,18 @@ func listServices(ctx context.Context, args []string) error {
 		return err
 	}
 	writer := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(writer, "SERVICE\tWORKER\tPORT\tPID\tSTATUS\tRESTARTS\tERROR")
+	fmt.Fprintln(writer, "SERVICE\tWORKER\tPORT\tPID\tSTATUS\tRESTARTS\tADDRESS\tERROR")
 	for _, service := range result.Services {
 		for _, instance := range service.Instances {
 			port := "-"
 			if instance.Port > 0 {
 				port = strconv.Itoa(instance.Port)
 			}
-			fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%d\t%s\n", service.Name, instance.WorkerID, port, instance.PID, instance.Status, instance.Restarts, instance.Error)
+			endpoint := "-"
+			if service.Endpoint != "" {
+				endpoint = strings.TrimRight(*address, "/") + service.Endpoint
+			}
+			fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%d\t%s\t%s\n", service.Name, instance.WorkerID, port, instance.PID, instance.Status, instance.Restarts, endpoint, instance.Error)
 		}
 	}
 	return writer.Flush()
@@ -128,6 +178,10 @@ func coordinatorRequest(ctx context.Context, method, address, path string, body,
 	if err != nil {
 		return err
 	}
+	return readCoordinatorResponse(response, result)
+}
+
+func readCoordinatorResponse(response *http.Response, result any) error {
 	defer response.Body.Close()
 	data, err := io.ReadAll(response.Body)
 	if err != nil {

@@ -3,10 +3,19 @@ const pendingView = document.getElementById('pending');
 const connectionError = document.getElementById('connection-error');
 const actionMessage = document.getElementById('action-message');
 const form = document.getElementById('create-form');
+const packageInput = document.getElementById('package-file');
+const clearPackage = document.getElementById('clear-package');
+const statefulInput = document.getElementById('stateful');
+const partitioningInput = document.getElementById('partitioning');
+const partitionsInput = document.getElementById('partitions');
+const replicasInput = document.getElementById('replicas');
+const statefulView = document.getElementById('stateful-services');
+const statefulList = document.getElementById('stateful-list');
 const stoppingInstances = new Map();
 const workerActions = new Map();
 let refreshing = false;
 let previousView = '';
+let statelessReplicas = replicasInput.value;
 document.getElementById('coordinator').textContent = location.host;
 
 function element(tag, className, text) {
@@ -38,8 +47,12 @@ function message(text, failed = false) {
 function instanceCard(service, instance) {
   const card = element('article', 'instance');
   const heading = element('div', 'row');
-  heading.append(element('h3', 'instance-name', service.name), badge(instance.status));
+  const title = element('div', 'instance-title');
+  title.append(element('h3', 'instance-name', service.name));
+  if (service.stateful) title.append(element('span', 'service-kind', 'Stateful'));
+  heading.append(title, badge(instance.status));
   card.append(heading, element('p', 'instance-id', instance.id));
+  if (service.endpoint) card.append(serviceLink(service));
   const values = element('dl', 'values');
   for (const [label, value] of [['PID', instance.pid || '—'], ['Port', instance.port || '—'], ['Restarts', instance.restarts]]) {
     const item = element('div', '');
@@ -100,6 +113,48 @@ function instanceCard(service, instance) {
   return card;
 }
 
+function serviceLink(service) {
+  const link = element('a', 'service-link', service.endpoint);
+  link.href = service.endpoint;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.title = 'One address for this service, balanced across its available copies';
+  return link;
+}
+
+function renderStatefulServices(services) {
+  statefulList.replaceChildren();
+  const statefulServices = services.filter(service => service.stateful);
+  statefulView.hidden = !statefulServices.length;
+  for (const service of statefulServices) {
+    const card = element('article', 'stateful-service');
+    const heading = element('div', 'stateful-service-heading');
+    heading.append(element('h3', 'instance-name', service.name));
+    if (service.endpoint) heading.append(serviceLink(service));
+    const count = service.partitions || service.state?.partitions || 1;
+    const strategy = service.partitioning || service.state?.partitioning || 'none';
+    card.append(heading, element('p', 'muted stateful-description', `${count} ${count === 1 ? 'partition' : 'partitions'} · ${strategy === 'hash' ? 'Hash by key' : 'Single partition'} · 3 copies of the data`));
+    const partitions = element('div', 'partitions');
+    for (const partition of service.partition_status || []) {
+      const section = element('section', 'partition');
+      const row = element('div', 'row');
+      row.append(element('h4', '', `Partition ${partition.index}`), badge(partition.status));
+      section.append(row, element('p', 'partition-leader', `Leader: ${partition.leader_id || 'Not reported'}`));
+      const replicas = element('ul', 'state-replicas');
+      for (const replica of partition.replicas) {
+        const item = element('li', '');
+        item.append(element('span', 'replica-worker', replica.worker_id), element('span', 'replica-role', `${replica.role} · ${replica.status}`));
+        replicas.append(item);
+      }
+      section.append(replicas);
+      partitions.append(section);
+    }
+    if (!partitions.childElementCount) partitions.append(element('p', 'empty', 'Waiting for workers to report dictionary status.'));
+    card.append(partitions);
+    statefulList.append(card);
+  }
+}
+
 function workerControl(worker) {
   const action = worker.status === 'ready' ? 'stop' : 'start';
   const label = action === 'start' ? 'Start worker' : 'Stop worker';
@@ -138,6 +193,7 @@ function render(workers, services) {
   const focusedAction = document.activeElement.dataset.action;
   const focusedWorker = document.activeElement.dataset.workerId;
   workersView.replaceChildren();
+  renderStatefulServices(services);
   const pending = pendingView.querySelector('.instances');
   pending.replaceChildren();
   const assigned = new Map(workers.map(worker => [worker.id, []]));
@@ -188,7 +244,7 @@ async function refresh() {
     for (const id of stoppingInstances.keys()) {
       if (!instanceIDs.has(id)) stoppingInstances.delete(id);
     }
-    const view = JSON.stringify({ workers: workers.map(worker => [worker.id, worker.status, worker.ip, worker.can_start]), workerActions: [...workerActions], services });
+    const view = JSON.stringify({ workers: workers.map(worker => [worker.id, worker.status, worker.ip, worker.can_start, worker.state_address]), workerActions: [...workerActions], services });
     if (view !== previousView) {
       render(workers, services);
       previousView = view;
@@ -200,6 +256,10 @@ async function refresh() {
         : 'Agent has not registered.';
     }
     const ready = workers.filter(worker => worker.status === 'ready').length;
+    const stateWorkers = new Set(workers.filter(worker => worker.status === 'ready' && worker.state_address).map(worker => worker.state_address)).size;
+    document.getElementById('stateful-help').textContent = stateWorkers >= 3
+      ? 'A dictionary stored across three workers. Three workers with collections enabled are ready.'
+      : `Needs three workers with collections enabled; ${stateWorkers} ${stateWorkers === 1 ? 'is' : 'are'} ready.`;
     const running = services.flatMap(service => service.instances).filter(instance => instance.status === 'running').length;
     document.getElementById('summary').textContent = `${ready} / ${workers.length} ready · ${running} running`;
     document.getElementById('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
@@ -212,17 +272,64 @@ async function refresh() {
   }
 }
 
+packageInput.addEventListener('change', () => {
+  clearPackage.hidden = !packageInput.files.length;
+});
+
+clearPackage.addEventListener('click', () => {
+  packageInput.value = '';
+  clearPackage.hidden = true;
+});
+
+function updateStateFields() {
+  const stateful = statefulInput.checked;
+  replicasInput.readOnly = stateful;
+  if (stateful) replicasInput.value = '3';
+  document.getElementById('replicas-help').textContent = stateful
+    ? 'Three application copies, one on each worker.'
+    : 'Number of instances to run across the workers.';
+  document.getElementById('state-fields').hidden = !stateful;
+  partitioningInput.disabled = !stateful;
+  const hash = stateful && partitioningInput.value === 'hash';
+  document.getElementById('partition-count-field').hidden = !hash;
+  partitionsInput.disabled = !hash;
+  partitionsInput.required = hash;
+}
+
+statefulInput.addEventListener('change', () => {
+  if (statefulInput.checked) statelessReplicas = replicasInput.value;
+  else replicasInput.value = statelessReplicas;
+  updateStateFields();
+});
+partitioningInput.addEventListener('change', updateStateFields);
+updateStateFields();
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   const button = document.getElementById('create-button');
+  const packageFile = packageInput.files[0];
   button.disabled = true;
-  button.textContent = 'Creating…';
+  button.textContent = packageFile ? 'Uploading…' : 'Creating…';
   const fields = new FormData(form);
   const service = {
     name: fields.get('name'), command: fields.get('command'),
     port: Number(fields.get('port')), replicas: Number(fields.get('replicas')),
   };
+  if (statefulInput.checked) {
+    service.stateful = true;
+    service.partitioning = partitioningInput.value;
+    service.partitions = partitioningInput.value === 'hash' ? Number(partitionsInput.value) : 1;
+  }
+  const args = fields.get('args').split(/\r?\n/).filter(argument => argument.trim() !== '');
+  if (args.length) service.args = args;
   try {
+    if (packageFile) {
+      const uploaded = await request('/packages', {
+        method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: packageFile,
+      });
+      service.package = uploaded.id;
+      button.textContent = 'Creating…';
+    }
     await request('/services', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(service) });
     message(`Created ${service.name}.`);
     document.getElementById('name').value = '';

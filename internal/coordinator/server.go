@@ -15,21 +15,27 @@ import (
 )
 
 type Coordinator struct {
-	mu         sync.Mutex
-	workers    map[string]api.Worker
-	services   map[string]api.Service
-	managedVMs map[string]string
-	vmCommands VMCommands
-	timeout    time.Duration
-	now        func() time.Time
+	mu           sync.Mutex
+	workers      map[string]api.Worker
+	services     map[string]api.Service
+	managedVMs   map[string]string
+	vmCommands   VMCommands
+	packageDir   string
+	dataDir      string
+	stateReports map[string][]api.StateStatus
+	nextInstance map[string]uint64
+	timeout      time.Duration
+	now          func() time.Time
 }
 
 func New(timeout time.Duration) *Coordinator {
 	return &Coordinator{
-		workers:  make(map[string]api.Worker),
-		services: make(map[string]api.Service),
-		timeout:  timeout,
-		now:      time.Now,
+		workers:      make(map[string]api.Worker),
+		services:     make(map[string]api.Service),
+		stateReports: make(map[string][]api.StateStatus),
+		nextInstance: make(map[string]uint64),
+		timeout:      timeout,
+		now:          time.Now,
 	}
 }
 
@@ -40,6 +46,8 @@ func (s *Coordinator) Handler() http.Handler {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("POST /packages", s.uploadPackage)
+	mux.HandleFunc("GET /packages/{id}", s.downloadPackage)
 	mux.HandleFunc("POST /workers", s.register)
 	mux.HandleFunc("POST /workers/{id}/heartbeat", s.heartbeat)
 	mux.HandleFunc("POST /workers/{id}/start", s.startWorker)
@@ -49,6 +57,8 @@ func (s *Coordinator) Handler() http.Handler {
 	mux.HandleFunc("GET /services", s.listServices)
 	mux.HandleFunc("DELETE /services/{name}", s.deleteService)
 	mux.HandleFunc("POST /services/{name}/instances/{id}/stop", s.stopInstance)
+	mux.HandleFunc("/apps/{name}", s.routeService)
+	mux.HandleFunc("/apps/{name}/{path...}", s.routeService)
 	return mux
 }
 
@@ -61,18 +71,37 @@ func (s *Coordinator) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "valid id and hostname are required")
 		return
 	}
+	if request.StateAddress != "" && !validStateAddress(request.StateAddress) {
+		writeError(w, http.StatusBadRequest, "state_address must be a reachable host and port")
+		return
+	}
 	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
 	s.mu.Lock()
-	worker := api.Worker{
-		ID:        request.ID,
-		Hostname:  request.Hostname,
-		IP:        ip,
-		SessionID: rand.Text(),
-		Status:    "ready",
-		LastSeen:  s.now().UTC(),
-	}
-	s.workers[worker.ID] = worker
 	for _, service := range s.services {
+		if service.State == nil {
+			continue
+		}
+		for _, member := range service.State.Members {
+			if member.ID == request.ID && member.Address != request.StateAddress {
+				s.mu.Unlock()
+				writeError(w, http.StatusConflict, "worker state address must match its existing state group membership")
+				return
+			}
+		}
+	}
+	worker := api.Worker{
+		ID:           request.ID,
+		Hostname:     request.Hostname,
+		IP:           ip,
+		SessionID:    rand.Text(),
+		Status:       "ready",
+		LastSeen:     s.now().UTC(),
+		StateAddress: request.StateAddress,
+	}
+	previous, registered := s.workers[worker.ID]
+	s.workers[worker.ID] = worker
+	services := copyServices(s.services)
+	for _, service := range services {
 		for i := range service.Instances {
 			instance := &service.Instances[i]
 			if instance.WorkerID == worker.ID {
@@ -80,7 +109,22 @@ func (s *Coordinator) register(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	s.assignPending()
+	changed := s.assignPending(services)
+	if changed {
+		err := s.saveServices(services)
+		if err != nil {
+			if registered {
+				s.workers[worker.ID] = previous
+			} else {
+				delete(s.workers, worker.ID)
+			}
+			s.mu.Unlock()
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	s.services = services
+	delete(s.stateReports, worker.ID)
 	s.mu.Unlock()
 	writeJSON(w, http.StatusCreated, worker)
 }
@@ -106,8 +150,9 @@ func (s *Coordinator) heartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "worker session has been replaced")
 		return
 	}
+	services := copyServices(s.services)
 	instances := make(map[string]*api.Instance)
-	for _, service := range s.services {
+	for _, service := range services {
 		for i := range service.Instances {
 			instance := &service.Instances[i]
 			instances[instance.ID] = instance
@@ -121,7 +166,7 @@ func (s *Coordinator) heartbeat(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "instance reports must be unique and belong to this worker")
 			return
 		}
-		if (report.Status != "running" && report.Status != "failed") || report.PID < 0 || report.Restarts < 0 || (report.Status == "running" && report.PID == 0) {
+		if (report.Status != "running" && report.Status != "failed" && report.Status != "preparing") || report.PID < 0 || report.Restarts < 0 || (report.Status == "running" && report.PID == 0) || (report.Status == "preparing" && report.PID != 0) {
 			s.mu.Unlock()
 			writeError(w, http.StatusBadRequest, "instance report has an invalid status, PID, or restart count")
 			return
@@ -133,16 +178,34 @@ func (s *Coordinator) heartbeat(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[report.ID] = true
 	}
+	err := s.validateStateReports(worker.ID, request.State)
+	if err != nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	for _, report := range request.Instances {
 		instance := instances[report.ID]
 		if instance != nil {
 			instance.InstanceStatus = report
 		}
 	}
+	previous := worker
 	worker.LastSeen = s.now().UTC()
 	worker.IP, _, _ = net.SplitHostPort(r.RemoteAddr)
 	s.workers[worker.ID] = worker
-	s.assignPending()
+	changed := s.assignPending(services)
+	if changed {
+		err := s.saveServices(services)
+		if err != nil {
+			s.workers[worker.ID] = previous
+			s.mu.Unlock()
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	s.services = services
+	s.stateReports[worker.ID] = append([]api.StateStatus(nil), request.State...)
 	assignments := s.assignments(worker.ID)
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, api.HeartbeatResponse{Assignments: assignments})

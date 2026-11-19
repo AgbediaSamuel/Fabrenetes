@@ -66,6 +66,8 @@ func runCoordinator(ctx context.Context, args []string) error {
 	workerVMs := flags.String("worker-vms", "", "comma-separated VM names whose agents the dashboard can start and stop")
 	vmListCommand := flags.String("vm-list-command", "", "VM discovery executable (defaults to Multipass)")
 	vmRunCommand := flags.String("vm-run-command", "", "VM command runner executable (defaults to Multipass)")
+	packageDir := flags.String("package-dir", "", "directory for uploaded packages (defaults to the user cache)")
+	dataDir := flags.String("data-dir", "", "directory for saved service definitions (defaults to application configuration)")
 	err := flags.Parse(args)
 	if err != nil {
 		return err
@@ -77,6 +79,14 @@ func runCoordinator(ctx context.Context, args []string) error {
 		return errors.New("worker-timeout must be positive")
 	}
 	cluster := coordinator.New(*timeout)
+	err = cluster.ConfigureData(*dataDir)
+	if err != nil {
+		return err
+	}
+	err = cluster.ConfigurePackages(*packageDir)
+	if err != nil {
+		return err
+	}
 	if *workerVMs != "" {
 		err = cluster.ConfigureVMs(ctx, strings.Split(*workerVMs, ","), coordinator.VMCommands{
 			List: *vmListCommand,
@@ -114,6 +124,9 @@ func runCoordinator(ctx context.Context, args []string) error {
 func runWorker(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("worker", flag.ContinueOnError)
 	id := flags.String("id", "", "unique worker identity (required)")
+	dataDir := flags.String("data-dir", "", "directory for application files and collections (defaults to application configuration)")
+	stateListen := flags.String("state-listen", os.Getenv("state_listen"), "HTTP address for collections; enables stateful services on this worker")
+	stateAddress := flags.String("state-address", os.Getenv("state_address"), "collections host:port reachable by other workers (defaults to state-listen)")
 	address := coordinatorFlag(flags)
 	err := flags.Parse(args)
 	if err != nil {
@@ -128,6 +141,9 @@ func runWorker(ctx context.Context, args []string) error {
 	}
 	return worker.Run(ctx, worker.Config{
 		ID: *id, Hostname: hostname, CoordinatorURL: *address,
+		DataDir:           *dataDir,
+		StateListen:       *stateListen,
+		StateAddress:      *stateAddress,
 		HeartbeatInterval: time.Second, RequestTimeout: 3 * time.Second,
 	})
 }

@@ -3,6 +3,7 @@ package coordinator
 import (
 	"crypto/rand"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -22,6 +23,22 @@ func (s *Coordinator) createService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "port must be between 1 and 65535 when specified")
 		return
 	}
+	if request.Stateful && request.Replicas != 3 {
+		writeError(w, http.StatusBadRequest, "stateful services require exactly three replicas")
+		return
+	}
+	err := normalizePartitioning(&request)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if request.Package != "" {
+		_, err := s.packagePath(request.Package)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	s.mu.Lock()
 	_, exists := s.services[request.Name]
 	if exists {
@@ -33,8 +50,29 @@ func (s *Coordinator) createService(w http.ResponseWriter, r *http.Request) {
 	for i := range service.Instances {
 		service.Instances[i].InstanceStatus = api.InstanceStatus{ID: rand.Text(), Status: "pending"}
 	}
-	s.services[service.Name] = service
-	s.assignPending()
+	if request.Stateful {
+		workers := s.stateWorkers()
+		if len(workers) != 3 {
+			s.mu.Unlock()
+			writeError(w, http.StatusConflict, "stateful services need three available workers with distinct state addresses")
+			return
+		}
+		service.State = &api.StateGroup{ID: rand.Text(), Partitioning: request.Partitioning, Partitions: request.Partitions}
+		for i, worker := range workers {
+			service.Instances[i].WorkerID = worker.ID
+			service.State.Members = append(service.State.Members, api.StateMember{ID: worker.ID, Address: worker.StateAddress})
+		}
+	}
+	services := copyServices(s.services)
+	services[service.Name] = service
+	s.assignPending(services)
+	err = s.saveServices(services)
+	if err != nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.services = services
 	service = s.serviceState(s.services[service.Name])
 	s.mu.Unlock()
 	writeJSON(w, http.StatusCreated, service)
@@ -60,14 +98,24 @@ func (s *Coordinator) deleteService(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "service does not exist")
 		return
 	}
-	delete(s.services, name)
+	services := copyServices(s.services)
+	delete(services, name)
+	err := s.saveServices(services)
+	if err != nil {
+		s.mu.Unlock()
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.services = services
+	delete(s.nextInstance, name)
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Coordinator) stopInstance(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
-	service, exists := s.services[r.PathValue("name")]
+	services := copyServices(s.services)
+	service, exists := services[r.PathValue("name")]
 	if !exists {
 		s.mu.Unlock()
 		writeError(w, http.StatusNotFound, "service does not exist")
@@ -90,6 +138,13 @@ func (s *Coordinator) stopInstance(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		instance.StopID = rand.Text()
+		err := s.saveServices(services)
+		if err != nil {
+			s.mu.Unlock()
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		s.services = services
 		current := *instance
 		s.mu.Unlock()
 		writeJSON(w, http.StatusAccepted, current)
@@ -101,6 +156,8 @@ func (s *Coordinator) stopInstance(w http.ResponseWriter, r *http.Request) {
 
 func (s *Coordinator) serviceState(service api.Service) api.Service {
 	service.Instances = append([]api.Instance(nil), service.Instances...)
+	service.Endpoint = "/apps/" + url.PathEscape(service.Name) + "/"
+	service.PartitionStatus = s.partitionStatus(service)
 	now := s.now()
 	for i := range service.Instances {
 		instance := &service.Instances[i]
@@ -111,7 +168,7 @@ func (s *Coordinator) serviceState(service api.Service) api.Service {
 	return service
 }
 
-func (s *Coordinator) assignPending() {
+func (s *Coordinator) assignPending(services map[string]api.Service) bool {
 	workers := make([]string, 0, len(s.workers))
 	now := s.now()
 	for id, worker := range s.workers {
@@ -120,12 +177,12 @@ func (s *Coordinator) assignPending() {
 		}
 	}
 	if len(workers) == 0 {
-		return
+		return false
 	}
 	sort.Strings(workers)
 	counts := make(map[string]int)
-	names := make([]string, 0, len(s.services))
-	for name, service := range s.services {
+	names := make([]string, 0, len(services))
+	for name, service := range services {
 		names = append(names, name)
 		for _, instance := range service.Instances {
 			if instance.WorkerID != "" {
@@ -134,8 +191,12 @@ func (s *Coordinator) assignPending() {
 		}
 	}
 	sort.Strings(names)
+	changed := false
 	for _, name := range names {
-		service := s.services[name]
+		service := services[name]
+		if service.Stateful {
+			continue
+		}
 		for i := range service.Instances {
 			instance := &service.Instances[i]
 			if instance.WorkerID != "" {
@@ -149,8 +210,10 @@ func (s *Coordinator) assignPending() {
 			}
 			instance.WorkerID = chosen
 			counts[chosen]++
+			changed = true
 		}
 	}
+	return changed
 }
 
 func (s *Coordinator) assignments(workerID string) []api.Assignment {
@@ -163,8 +226,10 @@ func (s *Coordinator) assignments(workerID string) []api.Assignment {
 					Service: service.Name,
 					Command: service.Command,
 					Args:    service.Args,
+					Package: service.Package,
 					Port:    service.Port,
 					StopID:  instance.StopID,
+					State:   service.State,
 				})
 			}
 		}

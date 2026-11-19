@@ -1,10 +1,12 @@
 package worker
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"sort"
+	"sync"
 	"syscall"
 
 	"fabrenetes/internal/api"
@@ -16,11 +18,18 @@ type process struct {
 	done       chan error
 	status     api.InstanceStatus
 	restart    bool
+	directory  string
+	preparing  <-chan preparation
+	cancel     context.CancelFunc
 }
 
 type processes struct {
-	workerID  string
-	instances map[string]*process
+	workerID     string
+	instances    map[string]*process
+	ctx          context.Context
+	packages     *packageStore
+	preparations sync.WaitGroup
+	stateURL     string
 }
 
 func (p *processes) status() []api.InstanceStatus {
@@ -53,7 +62,7 @@ func (p *processes) apply(assignments []api.Assignment) {
 	}
 	for id, child := range p.instances {
 		if !desired[id] {
-			child.stop()
+			child.remove()
 			delete(p.instances, id)
 		}
 	}
@@ -65,8 +74,28 @@ func (p *processes) apply(assignments []api.Assignment) {
 				status:     api.InstanceStatus{ID: assignment.ID},
 			}
 			p.instances[assignment.ID] = child
-			p.start(child)
+			if assignment.Package == "" {
+				p.start(child)
+			} else {
+				p.prepare(child)
+			}
 		} else {
+			if child.preparing != nil {
+				select {
+				case result := <-child.preparing:
+					child.preparing = nil
+					child.cancel()
+					child.cancel = nil
+					if result.err != nil {
+						child.status.Status = "failed"
+						child.status.Error = result.err.Error()
+					} else {
+						child.directory = result.directory
+						p.start(child)
+					}
+				default:
+				}
+			}
 			if assignment.StopID != child.assignment.StopID {
 				child.assignment.StopID = assignment.StopID
 				if child.command != nil && child.done != nil {
@@ -87,8 +116,30 @@ func (p *processes) apply(assignments []api.Assignment) {
 
 func (p *processes) stop() {
 	for _, child := range p.instances {
-		child.stop()
+		child.remove()
 	}
+	p.preparations.Wait()
+}
+
+func (p *processes) prepare(child *process) {
+	ctx, cancel := context.WithCancel(p.ctx)
+	child.cancel = cancel
+	result := make(chan preparation)
+	child.preparing = result
+	child.status.Status = "preparing"
+	id := child.assignment.Package
+	p.preparations.Add(1)
+	go func() {
+		defer p.preparations.Done()
+		directory, err := p.packages.prepare(ctx, id)
+		select {
+		case result <- preparation{directory: directory, err: err}:
+		case <-ctx.Done():
+			if directory != "" {
+				os.RemoveAll(directory)
+			}
+		}
+	}()
 }
 
 func (p *processes) start(child *process) {
@@ -96,6 +147,10 @@ func (p *processes) start(child *process) {
 	child.status.PID = 0
 	child.status.Status = "failed"
 	child.status.Error = ""
+	if child.assignment.State != nil && p.stateURL == "" {
+		child.status.Error = "worker has no collections endpoint"
+		return
+	}
 	port, err := p.availablePort(child)
 	child.status.Port = 0
 	if err != nil {
@@ -104,11 +159,15 @@ func (p *processes) start(child *process) {
 		return
 	}
 	command := exec.Command(child.assignment.Command, child.assignment.Args...)
+	command.Dir = child.directory
 	command.Env = append(os.Environ(),
 		"worker_id="+p.workerID,
 		"service_name="+child.assignment.Service,
 		"instance_id="+child.assignment.ID,
 	)
+	if child.assignment.State != nil {
+		command.Env = append(command.Env, "state_url="+p.stateURL+"/state/"+child.assignment.State.ID)
+	}
 	if port > 0 {
 		command.Env = append(command.Env, fmt.Sprintf("service_port=%d", port))
 	}
@@ -142,4 +201,17 @@ func (p *process) stop() {
 		p.done = nil
 	}
 	p.command = nil
+}
+
+func (p *process) remove() {
+	if p.cancel != nil {
+		p.cancel()
+		p.cancel = nil
+		p.preparing = nil
+	}
+	p.stop()
+	if p.directory != "" {
+		os.RemoveAll(p.directory)
+		p.directory = ""
+	}
 }

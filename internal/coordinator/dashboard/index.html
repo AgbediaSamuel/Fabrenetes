@@ -29,6 +29,13 @@
     <p id="connection-error" class="error" role="alert" hidden></p>
     <div class="layout">
       <section aria-labelledby="workers-heading">
+        <section id="stateful-services" class="stateful-services" aria-labelledby="stateful-heading" hidden>
+          <div class="section-heading">
+            <h2 id="stateful-heading">Stored service data</h2>
+            <p class="muted">Last reported by workers</p>
+          </div>
+          <div id="stateful-list"></div>
+        </section>
         <div class="section-heading">
           <h2 id="workers-heading">Worker placement</h2>
           <p id="summary" class="muted">Loading cluster…</p>
@@ -51,19 +58,47 @@
       <aside class="panel" aria-labelledby="create-heading">
         <div class="panel-heading">
           <h2 id="create-heading">Create service</h2>
-          <p class="muted">Use clock for the time-service demo.</p>
+          <p class="muted">Upload an application or use a command already on the workers.</p>
         </div>
         <form id="create-form">
           <label for="name">Service name</label>
           <input id="name" name="name" placeholder="clock-one" required autocomplete="off">
+          <div class="field-heading">
+            <label for="package-file">Application package</label>
+            <button id="clear-package" class="file-clear" type="button" hidden>Clear</button>
+          </div>
+          <input id="package-file" name="package" type="file" accept=".zip,application/zip" aria-describedby="package-help">
+          <p id="package-help" class="help">Optional ZIP containing the application, dependencies, and any required runtime.</p>
           <label for="command">Command</label>
-          <input id="command" name="command" value="clock" required autocomplete="off" spellcheck="false">
+          <input id="command" name="command" value="clock" required autocomplete="off" spellcheck="false" aria-describedby="command-help">
+          <p id="command-help" class="help">For uploaded apps, use a path inside the ZIP, such as ./runtime/node.</p>
+          <label for="args">Arguments (optional)</label>
+          <textarea id="args" name="args" rows="2" placeholder="server.js" spellcheck="false" aria-describedby="args-help"></textarea>
+          <p id="args-help" class="help">One argument per line.</p>
           <label for="port">Starting port</label>
           <input id="port" name="port" type="number" min="1" max="65535" value="9001" aria-describedby="port-help">
           <p id="port-help" class="help">Each instance gets an available port on its worker, starting here.</p>
+          <label class="checkbox-field" for="stateful">
+            <input id="stateful" name="stateful" type="checkbox" aria-describedby="stateful-help">
+            <span>Stateful service</span>
+          </label>
+          <p id="stateful-help" class="help">Give this service a dictionary stored across three workers.</p>
+          <div id="state-fields" hidden>
+            <label for="partitioning">Partitioning</label>
+            <select id="partitioning" name="partitioning" disabled>
+              <option value="none">Single partition</option>
+              <option value="hash">Hash by key</option>
+            </select>
+            <p class="help">Choose how keys are divided when the service is created.</p>
+            <div id="partition-count-field" hidden>
+              <label for="partitions">Partitions</label>
+              <input id="partitions" name="partitions" type="number" min="1" step="1" value="2" disabled>
+              <p class="help">Each partition keeps a copy of its data on all three workers.</p>
+            </div>
+          </div>
           <label for="replicas">Replicas</label>
           <input id="replicas" name="replicas" type="number" min="1" value="1" required>
-          <p class="help">Number of instances to run across the workers.</p>
+          <p id="replicas-help" class="help">Number of instances to run across the workers.</p>
           <button id="create-button" class="primary" type="submit">Create service</button>
           <p id="action-message" class="notice" role="status" aria-live="polite"></p>
         </form>

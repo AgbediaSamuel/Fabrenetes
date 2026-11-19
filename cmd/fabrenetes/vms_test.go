@@ -22,6 +22,7 @@ printf '%s' '[{"name":"other-worker","ip":"192.0.2.9"}]'
 		t.Fatal(err)
 	}
 	err = runCoordinator(context.Background(), []string{
+		"--data-dir", filepath.Join(dir, "coordinator"),
 		"--worker-vms", "worker-1",
 		"--vm-list-command", command,
 		"--vm-run-command", filepath.Join(dir, "run on vm"),

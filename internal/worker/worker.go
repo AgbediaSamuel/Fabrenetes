@@ -3,16 +3,21 @@ package worker
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"fabrenetes/internal/api"
+	"fabrenetes/internal/state"
 )
 
 type Config struct {
@@ -21,6 +26,9 @@ type Config struct {
 	CoordinatorURL    string
 	HeartbeatInterval time.Duration
 	RequestTimeout    time.Duration
+	DataDir           string
+	StateListen       string
+	StateAddress      string
 }
 
 func Run(ctx context.Context, config Config) error {
@@ -30,7 +38,50 @@ func Run(ctx context.Context, config Config) error {
 	}
 	client := &http.Client{Timeout: config.RequestTimeout}
 	defer client.CloseIdleConnections()
-	children := processes{workerID: config.ID, instances: make(map[string]*process)}
+	directory := config.DataDir
+	if directory == "" {
+		cache, err := os.UserConfigDir()
+		if err != nil {
+			return fmt.Errorf("find worker data directory: %w", err)
+		}
+		identity := sha256.Sum256([]byte(config.ID))
+		directory = filepath.Join(cache, "fabrenetes", "workers", fmt.Sprintf("%x", identity))
+	}
+	packages := &packageStore{baseURL: baseURL, dir: directory, client: &http.Client{}}
+	defer packages.client.CloseIdleConnections()
+	var dictionaries *state.Manager
+	var stateResult <-chan error
+	stateURL := ""
+	stateAddress := ""
+	if config.StateListen != "" {
+		listener, err := net.Listen("tcp", config.StateListen)
+		if err != nil {
+			return fmt.Errorf("listen for collections: %w", err)
+		}
+		defer listener.Close()
+		stateAddress = config.StateAddress
+		if stateAddress == "" {
+			stateAddress = listener.Addr().String()
+		}
+		dictionaries, err = state.New(config.ID, filepath.Join(directory, "state"), stateAddress)
+		if err != nil {
+			return err
+		}
+		defer dictionaries.Close()
+		server := &http.Server{Handler: dictionaries.Handler(), ReadHeaderTimeout: 5 * time.Second}
+		defer server.Close()
+		result := make(chan error, 1)
+		go func() { result <- server.Serve(listener) }()
+		stateResult = result
+		host, port, _ := net.SplitHostPort(listener.Addr().String())
+		ip := net.ParseIP(host)
+		if ip != nil && ip.IsUnspecified() {
+			host = "127.0.0.1"
+		}
+		stateURL = "http://" + net.JoinHostPort(host, port)
+		fmt.Println("Collections listening on", listener.Addr())
+	}
+	children := processes{workerID: config.ID, instances: make(map[string]*process), ctx: ctx, packages: packages, stateURL: stateURL}
 	defer children.stop()
 	heartbeatURL := baseURL + "/workers/" + url.PathEscape(config.ID) + "/heartbeat"
 	sessionID := ""
@@ -38,20 +89,32 @@ func Run(ctx context.Context, config Config) error {
 	defer fmt.Printf("Worker %s stopped\n", config.ID)
 
 	for {
+		select {
+		case err := <-stateResult:
+			return fmt.Errorf("collections server stopped: %w", err)
+		default:
+		}
 		var current api.Worker
 		var response api.HeartbeatResponse
 		registering := sessionID == ""
 		if registering {
 			err = post(ctx, client, baseURL+"/workers", api.RegisterRequest{
-				ID: config.ID, Hostname: config.Hostname,
+				ID: config.ID, Hostname: config.Hostname, StateAddress: stateAddress,
 			}, http.StatusCreated, &current)
 			if err == nil && current.SessionID == "" {
 				err = errors.New("registration response has no session ID")
 			}
 		} else {
+			var stateReports []api.StateStatus
+			if dictionaries != nil {
+				statusCtx, cancel := context.WithTimeout(ctx, config.RequestTimeout)
+				stateReports = dictionaries.Status(statusCtx)
+				cancel()
+			}
 			err = post(ctx, client, heartbeatURL, api.HeartbeatRequest{
 				SessionID: sessionID,
 				Instances: children.status(),
+				State:     stateReports,
 			}, http.StatusOK, &response)
 		}
 		if ctx.Err() != nil {
@@ -85,6 +148,18 @@ func Run(ctx context.Context, config Config) error {
 				sessionID = current.SessionID
 				fmt.Printf("Worker %s registered with %s\n", config.ID, baseURL)
 			} else {
+				if dictionaries != nil {
+					groups := make([]api.StateGroup, 0)
+					for _, assignment := range response.Assignments {
+						if assignment.State != nil {
+							groups = append(groups, *assignment.State)
+						}
+					}
+					err = dictionaries.Apply(groups)
+					if err != nil {
+						return fmt.Errorf("configure collections: %w", err)
+					}
+				}
 				children.apply(response.Assignments)
 			}
 		}
@@ -100,6 +175,9 @@ func (config Config) validate() (string, error) {
 	}
 	if config.HeartbeatInterval <= 0 || config.RequestTimeout <= 0 {
 		return "", errors.New("heartbeat interval and request timeout must be positive")
+	}
+	if config.StateAddress != "" && config.StateListen == "" {
+		return "", errors.New("state-address requires state-listen")
 	}
 	baseURL, err := url.Parse(config.CoordinatorURL)
 	if err != nil || baseURL.Host == "" ||

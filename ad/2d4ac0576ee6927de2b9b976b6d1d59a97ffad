@@ -1,0 +1,153 @@
+README.md
+  s_42497d430f6009::t_0b02ce00329ba3 13-16,64-65,88-136,145,150-153,156,164-166,172,184,188
+cmd/fabrenetes/main.go
+  s_42497d430f6009::t_77a365efbaf3dd 69-70,82-89,127-129,144-146
+cmd/fabrenetes/packages.go
+  s_42497d430f6009::t_d2684b5e8a8a4d 1-41
+cmd/fabrenetes/packages_test.go
+  s_42497d430f6009::t_cdaeaa008d9919 1-69
+cmd/fabrenetes/services.go
+  s_42497d430f6009::t_27691f0343ab64 15,27-30,40-66,80-90,98-100,120,127-131,181-184
+cmd/fabrenetes/state_test.go
+  s_42497d430f6009::t_d3c0a4953ff917 1-45
+cmd/fabrenetes/vms_test.go
+  s_42497d430f6009::t_393c92f319e5f3 25
+collections/dictionary.go
+  s_f9f33f1274387a::t_8686aa563e8412 1-112
+collections/dictionary_test.go
+  s_f9f33f1274387a::t_60cb4d5eb34a67 1-182
+examples/dictionary/main.go
+  s_42497d430f6009::t_77f3027ee9ffb8 1-77
+go.mod
+  s_2cb4008dbf3e2c::t_6a99f4994a8f2c 4-23
+go.sum
+  s_2cb4008dbf3e2c::t_6689d65f756ef8 1-188
+internal/api/api.go
+  s_42497d430f6009::t_0906d5e115c787 4-5,11-13,19,27-35,39-107,127-130,138-145
+internal/coordinator/dashboard/app.js
+  s_33844ec2141836::t_72e00b003a6f91 6-13,18,50-53,55,116-157,196,247,259-262,275-306,310,312,318-324,326-332
+internal/coordinator/dashboard/index.html
+  s_33844ec2141836::t_8e5f8109431f47 32-38,61,66-71,73-77,81-98,101
+internal/coordinator/dashboard/styles.css
+  s_33844ec2141836::t_d22b84861c450e 17,31-32,233-351,395,400,448,457-461,464,468-469,471-532,558,585-587,740
+internal/coordinator/packages.go
+  s_42497d430f6009::t_9870221330632f 1-96
+internal/coordinator/packages_test.go
+  s_42497d430f6009::t_63e28ecd573e1e 1-135
+internal/coordinator/partition_test.go
+  s_85173c16b5fee9::t_cd861c8e442af8 1-113
+internal/coordinator/routing.go
+  s_85173c16b5fee9::t_65591574a996f2 1-71
+internal/coordinator/routing_test.go
+  s_355a412b76f26f::t_c471cd79bfb300 1-196
+internal/coordinator/server.go
+  s_85173c16b5fee9::t_8d25d121f7f1df 18-28,33-38,49-50,60-61,74-77,80-91,93-99,101,103-104,112-127,153,155,169,181-186,193,197-208
+internal/coordinator/services.go
+  s_85173c16b5fee9::t_9e010d11f0d2e0 6,26-41,53-75,101-110,117-118,141-147,159-160,171,180,184-185,194,196-199,213,216,229,232
+internal/coordinator/state.go
+  s_33844ec2141836::t_0aa7314bfa86c8 1-208
+internal/coordinator/state_status.go
+  s_85173c16b5fee9::t_94fa0e358fe34d 1-130
+internal/coordinator/state_status_test.go
+  s_85173c16b5fee9::t_9b380e41771ee0 1-121
+internal/coordinator/state_test.go
+  s_2cb4008dbf3e2c::t_51b58d17ba8fe2 1-253
+internal/state/dictionary.go
+  s_c279b943d6e6b9::t_a7a06f80e7b07c 1-95
+internal/state/http.go
+  s_2d43903533f380::t_ff34991d4ce1e1 1-140
+internal/state/layout.go
+  s_2d43903533f380::t_7805fe38830c0c 1-83
+internal/state/manager.go
+  s_2d43903533f380::t_87cce904d56744 1-332
+internal/state/manager_test.go
+  s_2d43903533f380::t_ce47e7a116f306 1-259
+internal/state/partition_test.go
+  s_2d43903533f380::t_8564ace8a5d2b0 1-193
+internal/state/transport.go
+  s_c279b943d6e6b9::t_f39e9b807614ec 1-161
+internal/worker/packages.go
+  s_42497d430f6009::t_709f75aeceb991 1-175
+internal/worker/packages_test.go
+  s_42497d430f6009::t_a0e2cd9a6c2132 1-310
+internal/worker/processes.go
+  s_42497d430f6009::t_119c8fd687dda3 4,9,21-23,27-32,65,77-81,83-98,119,121-142,150-153,162,168-170,205-217
+internal/worker/state_test.go
+  s_f9f33f1274387a::t_d1c73ce7a766f3 1-310
+internal/worker/worker.go
+  s_42497d430f6009::t_993a20f01f6333 6,11,14-15,20,29-31,41-84,92-96,102,108-113,117,151-162,179-181
+internal/worker/workflow_test.go
+  s_355a412b76f26f::t_8b409b1a1f18a2 1-339
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ad2d4ac0576ee6927de2b9b976b6d1d59a97ffad",
+  "prompts": {},
+  "sessions": {
+    "s_2cb4008dbf3e2c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e1ec-f67c-7ec1-919a-718cafd97e17",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    },
+    "s_2d43903533f380": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3e9-4e83-7b71-bb71-9a2f94e69e37",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    },
+    "s_33844ec2141836": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3e9-e1f1-7791-b1d4-9aad096d8385",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    },
+    "s_355a412b76f26f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3ec-afb0-7fc1-a7ab-8e53b409de73",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    },
+    "s_42497d430f6009": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a19263-2a58-7300-ab67-76d971dda836",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    },
+    "s_85173c16b5fee9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e3e9-9f5b-7902-9499-15fc4c6be82d",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    },
+    "s_c279b943d6e6b9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e1ea-2a0f-7a13-ad0b-ed7df5741e6d",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    },
+    "s_f9f33f1274387a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1e1e9-f412-7a71-9385-f6c19e9bdd24",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+internal/worker/ports.go
+  s_e0953e9eb43ac5::t_864d5722afab6c 48-59,61
+internal/worker/ports_test.go
+  s_e0953e9eb43ac5::t_338e8a3877b1cc 58-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b4eb2d5c61bc3d8e21a3d247a546b5ecf95d78a8",
+  "prompts": {},
+  "sessions": {
+    "s_e0953e9eb43ac5": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1f5a7-4ef6-73d2-9327-4ba33e81f98a",
+        "model": "unknown"
+      },
+      "human_author": "Samuel Agbedia <solumide83@gmail.com>"
+    }
+  }
+}
